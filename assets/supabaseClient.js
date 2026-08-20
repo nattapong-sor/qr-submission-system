@@ -2,8 +2,8 @@
 // ตั้งค่าการเชื่อมต่อ Supabase
 // หา 2 ค่านี้ได้จาก Supabase Dashboard > Project Settings > API
 // ==========================================================
-const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";   // <-- แก้ตรงนี้
-const SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";           // <-- แก้ตรงนี้
+const SUPABASE_URL = "https://gpckjjqkuaewocsztmhp.supabase.co";   // <-- แก้ตรงนี้
+const SUPABASE_ANON_KEY = "sb_publishable_23gtVAsfmLVnlqrcK3gKhg_kndDGpdf";           // <-- แก้ตรงนี้
 
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
