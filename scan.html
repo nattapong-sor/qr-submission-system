@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>สแกน QR | ระบบสแกน QR บันทึกชิ้นงาน</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">📚 ระบบส่งชิ้นงาน</div>
+  <nav>
+    <a href="scan.html" class="active">สแกน</a>
+    <a href="dashboard.html">วิชา/ชิ้นงาน</a>
+    <a href="students.html">นักเรียน</a>
+    <a href="report.html">สรุปผล</a>
+    <a href="#" onclick="logout()">ออกจากระบบ</a>
+  </nav>
+</div>
+
+<div class="container">
+  <div class="card">
+    <h2>1) เลือกวิชาและชิ้นงานที่กำลังเช็ค</h2>
+    <div id="msg"></div>
+    <select id="subjectSelect"><option value="">-- เลือกวิชา --</option></select>
+    <select id="assignmentSelect" disabled><option value="">-- เลือกวิชาก่อน --</option></select>
+  </div>
+
+  <div class="card">
+    <h2>2) สแกน QR ของนักเรียน</h2>
+    <p style="color:var(--muted); font-size:14px;">เลือกชิ้นงานด้านบนก่อน แล้วยิงกล้องไปที่ QR ของนักเรียนได้ต่อเนื่องทีละคน</p>
+    <div id="reader" style="width:100%; max-width:400px; margin:0 auto;"></div>
+    <div id="scanResult"></div>
+  </div>
+
+  <div class="card">
+    <h2>รายการที่สแกนไปแล้ว (ชิ้นงานนี้)</h2>
+    <table id="logTable">
+      <thead><tr><th>เวลา</th><th>นักเรียน</th><th>ห้อง</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="assets/supabaseClient.js"></script>
+<script>
+let currentAssignmentId = null;
+let scannerRunning = false;
+let html5QrCode;
+
+async function init() {
+  const session = await requireLogin();
+  if (!session) return;
+  await loadSubjects();
+}
+
+async function loadSubjects() {
+  const { data, error } = await supabaseClient.from("subjects").select("id, name").order("name");
+  const sel = document.getElementById("subjectSelect");
+  if (error) { showMsg("โหลดวิชาไม่สำเร็จ: " + error.message, "error"); return; }
+  data.forEach(s => {
+    const opt = document.createElement("option");
+    opt.value = s.id; opt.textContent = s.name;
+    sel.appendChild(opt);
+  });
+}
+
+document.getElementById("subjectSelect").addEventListener("change", async (e) => {
+  const subjectId = e.target.value;
+  const aSel = document.getElementById("assignmentSelect");
+  aSel.innerHTML = '<option value="">-- เลือกชิ้นงาน --</option>';
+  aSel.disabled = !subjectId;
+  currentAssignmentId = null;
+  stopScanner();
+  if (!subjectId) return;
+
+  const { data, error } = await supabaseClient
+    .from("assignments").select("id, name, term")
+    .eq("subject_id", subjectId).order("created_at", { ascending: false });
+  if (error) { showMsg("โหลดชิ้นงานไม่สำเร็จ: " + error.message, "error"); return; }
+  data.forEach(a => {
+    const opt = document.createElement("option");
+    opt.value = a.id; opt.textContent = a.name + (a.term ? ` (${a.term})` : "");
+    aSel.appendChild(opt);
+  });
+});
+
+document.getElementById("assignmentSelect").addEventListener("change", async (e) => {
+  currentAssignmentId = e.target.value || null;
+  if (currentAssignmentId) {
+    await startScanner();
+    await loadLog();
+  } else {
+    stopScanner();
+  }
+});
+
+async function startScanner() {
+  if (scannerRunning) return;
+  html5QrCode = new Html5Qrcode("reader");
+  try {
+    await html5QrCode.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: 220 },
+      onScanSuccess,
+      () => {} // ignore per-frame scan errors
+    );
+    scannerRunning = true;
+  } catch (err) {
+    showMsg("เปิดกล้องไม่สำเร็จ: " + err, "error");
+  }
+}
+
+async function stopScanner() {
+  if (scannerRunning && html5QrCode) {
+    await html5QrCode.stop().catch(() => {});
+    scannerRunning = false;
+  }
+}
+
+let lastScan = "";
+let lastScanTime = 0;
+async function onScanSuccess(decodedText) {
+  // กันสแกนรัวจากเฟรมเดียวกันซ้ำๆ ภายใน 2 วิ
+  const now = Date.now();
+  if (decodedText === lastScan && now - lastScanTime < 2000) return;
+  lastScan = decodedText; lastScanTime = now;
+
+  if (!currentAssignmentId) return;
+
+  const { data: student, error: studentErr } = await supabaseClient
+    .from("students").select("id, full_name, classroom")
+    .eq("student_code", decodedText).maybeSingle();
+
+  if (studentErr || !student) {
+    showScanResult(`ไม่พบนักเรียนรหัส "${decodedText}" ในระบบ`, "err");
+    return;
+  }
+
+  const { data: session } = await supabaseClient.auth.getSession();
+  const { error: insertErr } = await supabaseClient.from("submissions").insert({
+    student_id: student.id,
+    assignment_id: currentAssignmentId,
+    scanned_by: session.session.user.id
+  });
+
+  if (insertErr) {
+    if (insertErr.code === "23505") { // unique violation = สแกนซ้ำ
+      showScanResult(`⚠️ ${student.full_name} สแกนไปแล้วก่อนหน้านี้`, "dup");
+    } else {
+      showScanResult("บันทึกไม่สำเร็จ: " + insertErr.message, "err");
+    }
+    return;
+  }
+
+  showScanResult(`✅ บันทึกแล้ว: ${student.full_name} (${student.classroom || "-"})`, "ok");
+  await loadLog();
+}
+
+function showScanResult(text, cls) {
+  document.getElementById("scanResult").innerHTML = `<div class="scan-result ${cls}">${text}</div>`;
+}
+
+async function loadLog() {
+  if (!currentAssignmentId) return;
+  const { data, error } = await supabaseClient
+    .from("submissions")
+    .select("scanned_at, students(full_name, classroom)")
+    .eq("assignment_id", currentAssignmentId)
+    .order("scanned_at", { ascending: false });
+  const tbody = document.querySelector("#logTable tbody");
+  tbody.innerHTML = "";
+  if (error) return;
+  data.forEach(row => {
+    const tr = document.createElement("tr");
+    const time = new Date(row.scanned_at).toLocaleTimeString("th-TH");
+    tr.innerHTML = `<td>${time}</td><td>${row.students?.full_name || "-"}</td><td>${row.students?.classroom || "-"}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function showMsg(text, type) {
+  document.getElementById("msg").innerHTML = `<div class="msg ${type}">${text}</div>`;
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>เข้าสู่ระบบ | ระบบสแกน QR บันทึกชิ้นงาน</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="container" style="max-width:400px; margin-top:80px;">
+  <div class="card">
+    <h1 style="text-align:center;">📚 ระบบสแกน QR<br>บันทึกการส่งชิ้นงาน</h1>
+    <div id="msg"></div>
+
+    <form id="loginForm">
+      <input type="email" id="email" placeholder="อีเมล" required>
+      <input type="password" id="password" placeholder="รหัสผ่าน" required>
+      <button type="submit">เข้าสู่ระบบ</button>
+    </form>
+
+    <p style="text-align:center; color:var(--muted); font-size:13px; margin-top:16px;">
+      ยังไม่มีบัญชี? <a href="#" id="showSignup">สมัครสำหรับคุณครู</a>
+    </p>
+
+    <form id="signupForm" style="display:none;">
+      <input type="email" id="signupEmail" placeholder="อีเมล" required>
+      <input type="password" id="signupPassword" placeholder="ตั้งรหัสผ่าน (อย่างน้อย 6 ตัว)" required>
+      <button type="submit">สมัครบัญชีครู</button>
+      <button type="button" class="secondary" id="cancelSignup">ยกเลิก</button>
+    </form>
+  </div>
+</div>
+
+<script src="assets/supabaseClient.js"></script>
+<script>
+const msg = document.getElementById("msg");
+function showMsg(text, type) {
+  msg.innerHTML = `<div class="msg ${type}">${text}</div>`;
+}
+
+document.getElementById("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  if (error) { showMsg("เข้าสู่ระบบไม่สำเร็จ: " + error.message, "error"); return; }
+  window.location.href = "scan.html";
+});
+
+document.getElementById("showSignup").addEventListener("click", (e) => {
+  e.preventDefault();
+  document.getElementById("loginForm").style.display = "none";
+  document.getElementById("signupForm").style.display = "block";
+});
+document.getElementById("cancelSignup").addEventListener("click", () => {
+  document.getElementById("signupForm").style.display = "none";
+  document.getElementById("loginForm").style.display = "block";
+});
+
+document.getElementById("signupForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = document.getElementById("signupEmail").value;
+  const password = document.getElementById("signupPassword").value;
+  const { error } = await supabaseClient.auth.signUp({ email, password });
+  if (error) { showMsg("สมัครไม่สำเร็จ: " + error.message, "error"); return; }
+  showMsg("สมัครสำเร็จ! ถ้าโปรเจกต์เปิด email confirmation ไว้ ให้เช็คอีเมลก่อนล็อกอิน", "success");
+});
+
+// ถ้าล็อกอินอยู่แล้ว เด้งไปหน้าสแกนเลย
+supabaseClient.auth.getSession().then(({ data: { session } }) => {
+  if (session) window.location.href = "scan.html";
+});
+</script>
+</body>
+</html>

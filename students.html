@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>นักเรียน | ระบบสแกน QR บันทึกชิ้นงาน</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">📚 ระบบส่งชิ้นงาน</div>
+  <nav>
+    <a href="scan.html">สแกน</a>
+    <a href="dashboard.html">วิชา/ชิ้นงาน</a>
+    <a href="students.html" class="active">นักเรียน</a>
+    <a href="report.html">สรุปผล</a>
+    <a href="#" onclick="logout()">ออกจากระบบ</a>
+  </nav>
+</div>
+
+<div class="container">
+  <div id="msg"></div>
+
+  <div class="card">
+    <h2>➕ เพิ่มนักเรียนทีละคน</h2>
+    <form id="studentForm">
+      <input type="text" id="studentCode" placeholder="รหัสนักเรียน เช่น 25690001" required>
+      <input type="text" id="fullName" placeholder="ชื่อ-นามสกุล" required>
+      <input type="text" id="classroom" placeholder="ห้อง เช่น ม.2/1">
+      <button type="submit">เพิ่มนักเรียน</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>📋 เพิ่มหลายคนพร้อมกัน (วาง CSV)</h2>
+    <p style="color:var(--muted); font-size:13px;">รูปแบบ: รหัสนักเรียน,ชื่อ-นามสกุล,ห้อง — 1 คนต่อ 1 บรรทัด</p>
+    <textarea id="bulkInput" rows="5" style="width:100%; font-family:monospace; padding:10px; border-radius:8px; border:1px solid var(--border);" placeholder="25690001,เด็กชายสมชาย ใจดี,ม.2/1
+25690002,เด็กหญิงสมหญิง รักเรียน,ม.2/1"></textarea>
+    <button style="margin-top:10px;" onclick="bulkImport()">นำเข้าทั้งหมด</button>
+  </div>
+
+  <div class="card">
+    <h2>รายชื่อนักเรียน (<span id="studentCount">0</span> คน)</h2>
+    <div class="no-print" style="margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="secondary" onclick="toggleSelectAll()">เลือก/ยกเลิกทั้งหมด</button>
+      <button onclick="printSelectedQR()">🖨️ พิมพ์ QR ที่เลือก</button>
+    </div>
+    <table id="studentsTable">
+      <thead><tr><th></th><th>รหัส</th><th>ชื่อ-นามสกุล</th><th>ห้อง</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card" id="qrPrintArea" style="display:none;">
+    <h2 class="no-print">QR สำหรับพิมพ์</h2>
+    <div id="qrGrid" class="qr-grid"></div>
+  </div>
+</div>
+
+<script src="assets/supabaseClient.js"></script>
+<script>
+let allStudents = [];
+
+async function init() {
+  const session = await requireLogin();
+  if (!session) return;
+  await loadStudents();
+}
+
+async function loadStudents() {
+  const { data, error } = await supabaseClient.from("students").select("*").order("classroom").order("student_code");
+  if (error) { showMsg("โหลดรายชื่อไม่สำเร็จ: " + error.message, "error"); return; }
+  allStudents = data;
+  document.getElementById("studentCount").textContent = data.length;
+  const tbody = document.querySelector("#studentsTable tbody");
+  tbody.innerHTML = "";
+  data.forEach(s => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><input type="checkbox" class="stu-check" value="${s.id}"></td>
+      <td>${s.student_code}</td><td>${s.full_name}</td><td>${s.classroom || "-"}</td>
+      <td><button class="danger" onclick="deleteStudent('${s.id}')">ลบ</button></td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById("studentForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const student_code = document.getElementById("studentCode").value.trim();
+  const full_name = document.getElementById("fullName").value.trim();
+  const classroom = document.getElementById("classroom").value.trim();
+  const { error } = await supabaseClient.from("students").insert({ student_code, full_name, classroom });
+  if (error) { showMsg("เพิ่มไม่สำเร็จ: " + error.message, "error"); return; }
+  document.getElementById("studentForm").reset();
+  showMsg("เพิ่มนักเรียนแล้ว", "success");
+  await loadStudents();
+});
+
+async function bulkImport() {
+  const lines = document.getElementById("bulkInput").value.split("\n").map(l => l.trim()).filter(Boolean);
+  const rows = lines.map(line => {
+    const [student_code, full_name, classroom] = line.split(",").map(x => x?.trim());
+    return { student_code, full_name, classroom: classroom || null };
+  }).filter(r => r.student_code && r.full_name);
+
+  if (rows.length === 0) { showMsg("ไม่พบข้อมูลที่ถูกต้อง", "error"); return; }
+  const { error } = await supabaseClient.from("students").insert(rows);
+  if (error) { showMsg("นำเข้าไม่สำเร็จ: " + error.message, "error"); return; }
+  document.getElementById("bulkInput").value = "";
+  showMsg(`นำเข้า ${rows.length} คนสำเร็จ`, "success");
+  await loadStudents();
+}
+
+async function deleteStudent(id) {
+  if (!confirm("ลบนักเรียนคนนี้? ประวัติการส่งงานของเขาจะหายไปด้วย")) return;
+  await supabaseClient.from("students").delete().eq("id", id);
+  await loadStudents();
+}
+
+function toggleSelectAll() {
+  const boxes = document.querySelectorAll(".stu-check");
+  const allChecked = [...boxes].every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+}
+
+async function printSelectedQR() {
+  const ids = [...document.querySelectorAll(".stu-check:checked")].map(b => b.value);
+  if (ids.length === 0) { showMsg("เลือกนักเรียนอย่างน้อย 1 คนก่อน", "error"); return; }
+  const selected = allStudents.filter(s => ids.includes(s.id));
+
+  const grid = document.getElementById("qrGrid");
+  grid.innerHTML = "";
+  document.getElementById("qrPrintArea").style.display = "block";
+
+  for (const s of selected) {
+    const item = document.createElement("div");
+    item.className = "qr-item";
+    const canvas = document.createElement("canvas");
+    item.appendChild(canvas);
+    const label = document.createElement("div");
+    label.textContent = `${s.full_name} (${s.classroom || "-"})`;
+    item.appendChild(label);
+    grid.appendChild(item);
+    await QRCode.toCanvas(canvas, s.student_code, { width: 130 });
+  }
+
+  document.getElementById("qrPrintArea").scrollIntoView({ behavior: "smooth" });
+  setTimeout(() => window.print(), 400);
+}
+
+function showMsg(text, type) {
+  document.getElementById("msg").innerHTML = `<div class="msg ${type}">${text}</div>`;
+}
+
+init();
+</script>
+</body>
+</html>

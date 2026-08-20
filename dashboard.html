@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>วิชา/ชิ้นงาน | ระบบสแกน QR บันทึกชิ้นงาน</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">📚 ระบบส่งชิ้นงาน</div>
+  <nav>
+    <a href="scan.html">สแกน</a>
+    <a href="dashboard.html" class="active">วิชา/ชิ้นงาน</a>
+    <a href="students.html">นักเรียน</a>
+    <a href="report.html">สรุปผล</a>
+    <a href="#" onclick="logout()">ออกจากระบบ</a>
+  </nav>
+</div>
+
+<div class="container">
+  <div id="msg"></div>
+
+  <div class="card">
+    <h2>➕ เพิ่มวิชาใหม่</h2>
+    <form id="subjectForm">
+      <input type="text" id="subjectName" placeholder="ชื่อวิชา เช่น วิทยาศาสตร์ ม.2/1" required>
+      <button type="submit">เพิ่มวิชา</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>รายวิชาทั้งหมด</h2>
+    <table id="subjectsTable">
+      <thead><tr><th>วิชา</th><th>จำนวนชิ้นงาน</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card" id="assignmentSection" style="display:none;">
+    <h2>ชิ้นงานของวิชา: <span id="selectedSubjectName"></span></h2>
+    <form id="assignmentForm">
+      <input type="text" id="assignmentName" placeholder="ชื่อชิ้นงาน เช่น ใบงานที่ 3: ระบบสุริยะ" required>
+      <input type="text" id="assignmentTerm" placeholder="เทอม (เช่น 1/2569) — ไม่บังคับ">
+      <button type="submit">เพิ่มชิ้นงาน</button>
+    </form>
+    <table id="assignmentsTable">
+      <thead><tr><th>ชิ้นงาน</th><th>เทอม</th><th>จำนวนที่ส่งแล้ว</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="assets/supabaseClient.js"></script>
+<script>
+let selectedSubjectId = null;
+
+async function init() {
+  const session = await requireLogin();
+  if (!session) return;
+  await loadSubjects();
+}
+
+async function loadSubjects() {
+  const { data: subjects, error } = await supabaseClient
+    .from("subjects").select("id, name").order("created_at", { ascending: false });
+  if (error) { showMsg("โหลดวิชาไม่สำเร็จ: " + error.message, "error"); return; }
+
+  const tbody = document.querySelector("#subjectsTable tbody");
+  tbody.innerHTML = "";
+  for (const s of subjects) {
+    const { count } = await supabaseClient
+      .from("assignments").select("id", { count: "exact", head: true }).eq("subject_id", s.id);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${s.name}</td><td>${count ?? 0}</td>
+      <td><button class="secondary" onclick="openSubject('${s.id}', '${s.name.replace(/'/g,"\\'")}')">ดูชิ้นงาน</button></td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+document.getElementById("subjectForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = document.getElementById("subjectName").value.trim();
+  const { data: session } = await supabaseClient.auth.getSession();
+  const { error } = await supabaseClient.from("subjects").insert({ name, created_by: session.session.user.id });
+  if (error) { showMsg("เพิ่มวิชาไม่สำเร็จ: " + error.message, "error"); return; }
+  document.getElementById("subjectName").value = "";
+  showMsg("เพิ่มวิชาแล้ว", "success");
+  await loadSubjects();
+});
+
+function openSubject(id, name) {
+  selectedSubjectId = id;
+  document.getElementById("selectedSubjectName").textContent = name;
+  document.getElementById("assignmentSection").style.display = "block";
+  loadAssignments();
+  document.getElementById("assignmentSection").scrollIntoView({ behavior: "smooth" });
+}
+
+async function loadAssignments() {
+  const { data, error } = await supabaseClient
+    .from("assignments").select("id, name, term")
+    .eq("subject_id", selectedSubjectId).order("created_at", { ascending: false });
+  if (error) return;
+  const tbody = document.querySelector("#assignmentsTable tbody");
+  tbody.innerHTML = "";
+  for (const a of data) {
+    const { count } = await supabaseClient
+      .from("submissions").select("id", { count: "exact", head: true }).eq("assignment_id", a.id);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${a.name}</td><td>${a.term || "-"}</td><td>${count ?? 0} คน</td>
+      <td><button class="danger" onclick="deleteAssignment('${a.id}')">ลบ</button></td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+document.getElementById("assignmentForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = document.getElementById("assignmentName").value.trim();
+  const term = document.getElementById("assignmentTerm").value.trim();
+  const { error } = await supabaseClient.from("assignments").insert({ subject_id: selectedSubjectId, name, term });
+  if (error) { showMsg("เพิ่มชิ้นงานไม่สำเร็จ: " + error.message, "error"); return; }
+  document.getElementById("assignmentName").value = "";
+  document.getElementById("assignmentTerm").value = "";
+  await loadAssignments();
+  await loadSubjects();
+});
+
+async function deleteAssignment(id) {
+  if (!confirm("ลบชิ้นงานนี้? ประวัติการสแกนของชิ้นงานนี้จะหายไปด้วย")) return;
+  await supabaseClient.from("assignments").delete().eq("id", id);
+  await loadAssignments();
+  await loadSubjects();
+}
+
+function showMsg(text, type) {
+  document.getElementById("msg").innerHTML = `<div class="msg ${type}">${text}</div>`;
+}
+
+init();
+</script>
+</body>
+</html>
